@@ -16,6 +16,7 @@ import {
   Monitor,
   FolderOpen,
   Lock,
+  GitCommitHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PlatformIcon } from "@/components/platform/PlatformIcon";
@@ -23,17 +24,11 @@ import { SkillFrontmatterCard } from "@/components/skill/SkillFrontmatterCard";
 import { parseFrontmatter } from "@/lib/frontmatter";
 import { useSkillDetailStore } from "@/stores/skillDetailStore";
 import { usePlatformStore } from "@/stores/platformStore";
+import { Input } from "@/components/ui/input";
 import { CollectionPickerDialog } from "@/components/collection/CollectionPickerDialog";
-import {
-  AgentWithStatus,
-  ClaudeSourceKind,
-  SkillDetailRequest,
-  SkillDirectoryNode,
-  SkillInstallation,
-} from "@/types";
+import { AgentWithStatus, ClaudeSourceKind, SkillDetailRequest, SkillInstallation } from "@/types";
 import { cn } from "@/lib/utils";
 import { invoke, isTauriRuntime } from "@/lib/tauri";
-import { isInstallTargetAgent } from "@/lib/agents";
 
 // ─── Section Label ─────────────────────────────────────────────────────────────
 
@@ -61,7 +56,6 @@ function MetadataRow({ label, value }: { label: string; value: string }) {
 function SourceOriginBadge({ originKind }: { originKind: ClaudeSourceKind }) {
   const { t, i18n } = useTranslation();
   const isPlugin = originKind === "plugin";
-  const isCompatibility = originKind === "compatibility";
 
   return (
     <span
@@ -69,8 +63,6 @@ function SourceOriginBadge({ originKind }: { originKind: ClaudeSourceKind }) {
         "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1",
         isPlugin
           ? "bg-amber-500/10 text-amber-700 ring-amber-500/20 dark:text-amber-300"
-          : isCompatibility
-            ? "bg-violet-500/10 text-violet-700 ring-violet-500/20 dark:text-violet-300"
           : "bg-sky-500/10 text-sky-700 ring-sky-500/20 dark:text-sky-300"
       )}
     >
@@ -78,10 +70,6 @@ function SourceOriginBadge({ originKind }: { originKind: ClaudeSourceKind }) {
         ? t("platform.originPlugin", {
             defaultValue: i18n.language.startsWith("zh") ? "插件来源" : "Plugin source",
           })
-        : isCompatibility
-          ? t("platform.originCompatibility", {
-              defaultValue: i18n.language.startsWith("zh") ? "兼容来源" : "Compatibility source",
-            })
         : t("platform.originUser", {
             defaultValue: i18n.language.startsWith("zh") ? "用户来源" : "User source",
           })}
@@ -108,88 +96,28 @@ interface PlatformToggleIconProps {
   agent: AgentWithStatus;
   skillName: string;
   isInstalled: boolean;
-  isReadOnly: boolean;
   isLoading: boolean;
   onToggle: () => void;
 }
 
-function PlatformToggleIcon({
-  agent,
-  skillName,
-  isInstalled,
-  isReadOnly,
-  isLoading,
-  onToggle,
-}: PlatformToggleIconProps) {
+function PlatformToggleIcon({ agent, skillName, isInstalled, isLoading, onToggle }: PlatformToggleIconProps) {
   const { t } = useTranslation();
   return (
     <button
       className={cn(
-        "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors cursor-pointer",
+        "p-1.5 rounded-md transition-colors cursor-pointer",
         isInstalled
-          ? "text-primary hover:bg-primary/10"
+          ? "text-primary hover:bg-primary/15"
           : "text-muted-foreground/40 hover:bg-muted/60 hover:text-muted-foreground",
-        isReadOnly && "cursor-default hover:bg-transparent",
         isLoading && "animate-pulse pointer-events-none"
       )}
       title={`${agent.display_name}${isInstalled ? ` — ${t("central.linked")}` : ""}`}
       aria-label={t("central.toggleInstallLabel", { platform: agent.display_name, skill: skillName })}
-      aria-pressed={isInstalled}
-      disabled={isLoading || isReadOnly}
+      disabled={isLoading}
       onClick={onToggle}
     >
-      <PlatformIcon
-        agentId={agent.id}
-        className={cn(
-          "size-4 shrink-0 transition-all",
-          isInstalled ? "opacity-100 grayscale-0" : "opacity-40 grayscale"
-        )}
-        size={16}
-      />
+      <PlatformIcon agentId={agent.id} className="size-4 shrink-0" size={16} />
     </button>
-  );
-}
-
-interface PlatformToggleGroupProps {
-  label: string;
-  agents: AgentWithStatus[];
-  skillName: string;
-  installationMap: Map<string, SkillInstallation>;
-  readOnlyAgentIds: Set<string>;
-  installingAgentId: string | null;
-  onToggle: (agentId: string) => void;
-}
-
-function PlatformToggleGroup({
-  label,
-  agents,
-  skillName,
-  installationMap,
-  readOnlyAgentIds,
-  installingAgentId,
-  onToggle,
-}: PlatformToggleGroupProps) {
-  if (agents.length === 0) return null;
-
-  return (
-    <div className="flex items-start gap-1">
-      <span className="flex h-6 w-12 shrink-0 items-center text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider">
-        {label}
-      </span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5">
-        {agents.map((agent) => (
-          <PlatformToggleIcon
-            key={agent.id}
-            agent={agent}
-            skillName={skillName}
-            isInstalled={installationMap.has(agent.id) || readOnlyAgentIds.has(agent.id)}
-            isReadOnly={readOnlyAgentIds.has(agent.id)}
-            isLoading={installingAgentId === agent.id}
-            onToggle={() => onToggle(agent.id)}
-          />
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -200,10 +128,9 @@ type PreviewTab = "markdown" | "raw" | "explanation";
 interface TabToggleProps {
   activeTab: PreviewTab;
   onChange: (tab: PreviewTab) => void;
-  previewLabel: string;
 }
 
-function TabToggle({ activeTab, onChange, previewLabel }: TabToggleProps) {
+function TabToggle({ activeTab, onChange }: TabToggleProps) {
   const { t } = useTranslation();
   return (
     <div className="flex border border-border rounded-lg p-0.5 gap-0.5 bg-muted/40">
@@ -219,7 +146,7 @@ function TabToggle({ activeTab, onChange, previewLabel }: TabToggleProps) {
         )}
       >
         <FileText className="size-3.5" />
-        {previewLabel}
+        {t("detail.markdown")}
       </button>
       <button
         role="tab"
@@ -269,98 +196,6 @@ const detailTypographyClassName = cn(
   "[&_pre_code]:text-[12px] [&_pre_code]:leading-5"
 );
 
-interface SelectedSkillFile {
-  path: string;
-  relativePath: string;
-}
-
-function deriveDirPathFromFilePath(path: string): string {
-  const match = path.match(/^(.*)[/\\][^/\\]+$/);
-  return match?.[1] ?? path;
-}
-
-function findFileNodeByPath(nodes: SkillDirectoryNode[], path: string): SkillDirectoryNode | null {
-  for (const node of nodes) {
-    if (node.path === path) {
-      return node;
-    }
-    if (node.children.length > 0) {
-      const match = findFileNodeByPath(node.children, path);
-      if (match) {
-        return match;
-      }
-    }
-  }
-  return null;
-}
-
-function FileTreeNode({
-  node,
-  level,
-  selectedPath,
-  expandedDirectories,
-  onToggleDirectory,
-  onSelectFile,
-}: {
-  node: SkillDirectoryNode;
-  level: number;
-  selectedPath: string | null;
-  expandedDirectories: Set<string>;
-  onToggleDirectory: (path: string) => void;
-  onSelectFile: (file: SelectedSkillFile) => void;
-}) {
-  const paddingLeft = `${level * 12}px`;
-
-  if (node.is_dir) {
-    const isExpanded = expandedDirectories.has(node.path);
-    return (
-      <div className="space-y-1">
-        <button
-          type="button"
-          aria-expanded={isExpanded}
-          onClick={() => onToggleDirectory(node.path)}
-          className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground cursor-pointer"
-          style={{ paddingLeft }}
-        >
-          {isExpanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
-          <FolderOpen className="size-3.5 shrink-0" />
-          <span className="truncate">{node.name}</span>
-        </button>
-        {isExpanded && node.children.map((child) => (
-          <FileTreeNode
-            key={child.path}
-            node={child}
-            level={level + 1}
-            selectedPath={selectedPath}
-            expandedDirectories={expandedDirectories}
-            onToggleDirectory={onToggleDirectory}
-            onSelectFile={onSelectFile}
-          />
-        ))}
-      </div>
-    );
-  }
-
-  const isSelected = node.path === selectedPath;
-  return (
-    <button
-      type="button"
-      onClick={() => onSelectFile({ path: node.path, relativePath: node.relative_path })}
-      className={cn(
-        "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs transition-colors cursor-pointer",
-        isSelected
-          ? "bg-primary/10 text-primary"
-          : "text-foreground/80 hover:bg-muted/60 hover:text-foreground"
-      )}
-      style={{ paddingLeft }}
-      title={node.relative_path}
-    >
-      <FileText className="size-3.5 shrink-0" />
-      <span className="truncate">{node.name}</span>
-    </button>
-  );
-}
-
 // ─── SkillDetailView ──────────────────────────────────────────────────────────
 
 /**
@@ -406,8 +241,6 @@ export interface SkillDetailViewProps {
   scrollContainerRef?: Ref<HTMLDivElement>;
   /** Optional id applied to the ViewHeader h1 for shell-level aria-labelledby. */
   titleId?: string;
-  /** Optional hook for parent lists that need fresh install/status summaries. */
-  onInstallationsChange?: () => void | Promise<void>;
 }
 
 export function SkillDetailView({
@@ -421,7 +254,6 @@ export function SkillDetailView({
   onRequestClose: _onRequestClose,
   scrollContainerRef,
   titleId,
-  onInstallationsChange,
 }: SkillDetailViewProps) {
   const { t, i18n } = useTranslation();
   const isFileMode = !skillId && !!filePath;
@@ -455,13 +287,6 @@ export function SkillDetailView({
   const [fileIsLoading, setFileIsLoading] = useState(false);
   const [fileExplanation, setFileExplanation] = useState<string | null>(null);
   const [fileIsExplaining, setFileIsExplaining] = useState(false);
-  const [directoryTree, setDirectoryTree] = useState<SkillDirectoryNode[]>([]);
-  const [isDirectoryTreeLoading, setIsDirectoryTreeLoading] = useState(false);
-  const [directoryTreeError, setDirectoryTreeError] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<SelectedSkillFile | null>(null);
-  const [selectedFileContent, setSelectedFileContent] = useState<string | null>(null);
-  const [isSelectedFileLoading, setIsSelectedFileLoading] = useState(false);
-  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(new Set());
   const detailRequest = useMemo<SkillDetailRequest | null>(
     () => (skillId ? { skillId, agentId, rowId } : null),
     [skillId, agentId, rowId]
@@ -474,7 +299,7 @@ export function SkillDetailView({
   }, [detail?.row_id, rowId, skillId]);
 
   // Unified accessors
-  const skillContent = isFileMode ? fileContent : storeContent;
+  const content = isFileMode ? fileContent : storeContent;
   const isLoading = isFileMode ? fileIsLoading : storeIsLoading;
   const explanation = isFileMode ? fileExplanation : storeExplanation;
   const isExplanationLoading = isFileMode ? fileIsExplaining : storeIsExplanationLoading;
@@ -484,42 +309,20 @@ export function SkillDetailView({
   const [isCollectionPickerOpen, setIsCollectionPickerOpen] = useState(false);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const addToCollectionButtonRef = useRef<HTMLButtonElement | null>(null);
-  const selectedFilePath = selectedFile?.path ?? null;
-  const selectedRelativePath = selectedFile?.relativePath ?? null;
-  const currentDirectoryPath = useMemo(() => {
-    if (isFileMode) {
-      return discoverMetadata?.dirPath ?? (filePath ? deriveDirPathFromFilePath(filePath) : null);
-    }
-    return detail?.dir_path ?? null;
-  }, [detail?.dir_path, discoverMetadata?.dirPath, filePath, isFileMode]);
-  const skillFilePath = isFileMode ? filePath ?? null : detail?.file_path ?? null;
+
+  // Git editing state
+  const [isSaving, setIsSaving] = useState(false);
+  const [editedContent, setEditedContent] = useState("");
+  const [commitMessage, setCommitMessage] = useState("");
+
+  const centralAgent = agents.find((a) => a.id === "central");
+  const centralSkillsDir = centralAgent?.global_skills_dir;
 
   useEffect(() => {
     if (detail?.is_read_only && isCollectionPickerOpen) {
       setIsCollectionPickerOpen(false);
     }
   }, [detail?.is_read_only, isCollectionPickerOpen]);
-
-  const fetchDirectoryTree = useCallback(async (dirPath: string) => {
-    if (!isTauriRuntime()) {
-      setDirectoryTree([]);
-      setDirectoryTreeError(null);
-      setIsDirectoryTreeLoading(false);
-      return;
-    }
-
-    setIsDirectoryTreeLoading(true);
-    setDirectoryTreeError(null);
-    try {
-      const tree = await invoke<SkillDirectoryNode[]>("list_skill_directory", { dirPath });
-      setDirectoryTree(tree);
-    } catch (err) {
-      setDirectoryTree([]);
-      setDirectoryTreeError(String(err));
-    } finally {
-      setIsDirectoryTreeLoading(false);
-    }
-  }, []);
 
   // ── File mode: load content from path ─────────────────────────────────
   const fetchFileContent = useCallback(async () => {
@@ -539,9 +342,6 @@ export function SkillDetailView({
     if (isFileMode) {
       setFileContent(null);
       setFileExplanation(null);
-      setSelectedFile(null);
-      setSelectedFileContent(null);
-      setExpandedDirectories(new Set());
       setActiveTab("markdown");
       void fetchFileContent();
     }
@@ -563,88 +363,21 @@ export function SkillDetailView({
     }
   }, [explanationRequestKey, storeContent, i18n.language, loadCachedExplanation]);
 
-  useEffect(() => {
-    if (!currentDirectoryPath) {
-      setDirectoryTree([]);
-      setDirectoryTreeError(null);
-      return;
-    }
-
-    setSelectedFile(null);
-    setSelectedFileContent(null);
-    setExpandedDirectories(new Set());
-    void fetchDirectoryTree(currentDirectoryPath);
-  }, [currentDirectoryPath, fetchDirectoryTree]);
-
-  useEffect(() => {
-    if (!skillFilePath || directoryTree.length === 0) {
-      return;
-    }
-
-    if (selectedFilePath && findFileNodeByPath(directoryTree, selectedFilePath)) {
-      return;
-    }
-
-    const defaultNode = findFileNodeByPath(directoryTree, skillFilePath);
-    setSelectedFile({
-      path: skillFilePath,
-      relativePath: defaultNode?.relative_path ?? "SKILL.md",
-    });
-  }, [directoryTree, selectedFilePath, skillFilePath]);
-
-  useEffect(() => {
-    if (!selectedFilePath || !skillFilePath || selectedFilePath === skillFilePath) {
-      setSelectedFileContent(null);
-      setIsSelectedFileLoading(false);
-      return;
-    }
-    if (!isTauriRuntime()) {
-      setSelectedFileContent(null);
-      setIsSelectedFileLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setIsSelectedFileLoading(true);
-    invoke<string>("read_file_by_path", { path: selectedFilePath })
-      .then((text) => {
-        if (!cancelled) {
-          setSelectedFileContent(text);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSelectedFileContent(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsSelectedFileLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedFilePath, skillFilePath]);
-
   // ── Derived values ───────────────────────────────────────────────────────
 
-  const targetAgents = agents.filter(isInstallTargetAgent);
+  const targetAgents = agents.filter((a) => a.id !== "central");
   const lobsterAgents = targetAgents.filter((a) => a.category === "lobster");
   const codingAgents = targetAgents.filter((a) => a.category !== "lobster");
 
   const installationMap = new Map<string, SkillInstallation>(
     (detail?.installations ?? []).map((inst) => [inst.agent_id, inst])
   );
-  const readOnlyAgentIds = new Set(detail?.read_only_agents ?? []);
   const skillCollections = detail?.collections ?? [];
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
   async function handleToggle(agentId: string) {
     if (!skillId || detail?.is_read_only) return;
-    if (readOnlyAgentIds.has(agentId)) return;
     const isInstalled = installationMap.has(agentId);
     try {
       if (isInstalled) {
@@ -656,7 +389,6 @@ export function SkillDetailView({
         refreshCounts(),
         refreshInstallations(skillId),
       ]);
-      await onInstallationsChange?.();
     } catch (err) {
       toast.error(
         isInstalled
@@ -682,47 +414,28 @@ export function SkillDetailView({
   }
 
   function handleGenerateExplanation() {
-    if (isFileMode && skillContent) {
+    if (isFileMode && content) {
       setFileIsExplaining(true);
       setFileExplanation(null);
-      invoke<string>("explain_skill", { content: skillContent })
+      invoke<string>("explain_skill", { content })
         .then(setFileExplanation)
         .catch((err) => setFileExplanation(`Error: ${String(err)}`))
         .finally(() => setFileIsExplaining(false));
       return;
     }
-    if (explanationRequestKey && skillContent) {
-      generateExplanation(explanationRequestKey, skillContent, i18n.language);
+    if (explanationRequestKey && content) {
+      generateExplanation(explanationRequestKey, content, i18n.language);
     }
   }
 
   function handleRefreshExplanation() {
-    if (isFileMode && skillContent) {
+    if (isFileMode && content) {
       handleGenerateExplanation();
       return;
     }
-    if (explanationRequestKey && skillContent) {
-      refreshExplanation(explanationRequestKey, skillContent, i18n.language);
+    if (explanationRequestKey && content) {
+      refreshExplanation(explanationRequestKey, content, i18n.language);
     }
-  }
-
-  function handleSelectFile(file: SelectedSkillFile) {
-    setSelectedFile(file);
-    if (activeTab === "explanation") {
-      setActiveTab(file.path.toLowerCase().endsWith(".md") ? "markdown" : "raw");
-    }
-  }
-
-  function handleToggleDirectory(path: string) {
-    setExpandedDirectories((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
   }
 
   const handleOpenDiscoverPath = useCallback(async () => {
@@ -734,23 +447,31 @@ export function SkillDetailView({
     }
   }, [discoverMetadata]);
 
-  const previewContent = selectedFilePath && skillFilePath && selectedFilePath !== skillFilePath
-    ? selectedFileContent
-    : skillContent;
-  const selectedPreviewPath = selectedFilePath ?? skillFilePath;
-  const isSelectedMarkdownFile = (selectedPreviewPath ?? "").toLowerCase().endsWith(".md");
-  const previewLabel = isSelectedMarkdownFile ? t("detail.markdown") : t("detail.preview");
-  const { frontmatterRaw, frontmatterData, body: markdownContent } = previewContent && isSelectedMarkdownFile
-    ? parseFrontmatter(previewContent)
-    : { frontmatterRaw: "", frontmatterData: {}, body: previewContent ?? "" };
+  const { frontmatterRaw, frontmatterData, body: markdownContent } = content
+    ? parseFrontmatter(content)
+    : { frontmatterRaw: "", frontmatterData: {}, body: "" };
   const isBrowserFallback = !isTauriRuntime() && !isLoading && !detail && !error && !isFileMode;
+  const canEdit =
+    !isBrowserFallback &&
+    !isFileMode &&
+    !!detail &&
+    !detail.is_read_only &&
+    !!detail.file_path &&
+    !!centralSkillsDir;
+
+  // Sync editedContent when content loads (reset when content changes)
+  useEffect(() => {
+    if (content && !editedContent) {
+      setEditedContent(content);
+    }
+  }, [content]); // eslint-disable-line react-hooks/exhaustive-deps
   const effectiveName = isFileMode
     ? (discoverMetadata?.name ?? "")
     : (detail?.name ?? detailRequest?.skillId ?? "");
   const effectiveDescription = isFileMode
     ? discoverMetadata?.description
     : detail?.description;
-  const hasData = isFileMode ? skillContent !== null : !!detail;
+  const hasData = isFileMode ? content !== null : !!detail;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -769,7 +490,7 @@ export function SkillDetailView({
             </p>
           )}
         </div>
-        <TabToggle activeTab={activeTab} onChange={setActiveTab} previewLabel={previewLabel} />
+        <TabToggle activeTab={activeTab} onChange={setActiveTab} />
       </div>
 
       {/* ── ContentArea ──────────────────────────────────────────────────── */}
@@ -827,33 +548,15 @@ export function SkillDetailView({
                 <div
                   className="p-6 space-y-4"
                   role="tabpanel"
-                  aria-label={previewLabel}
+                  aria-label={t("detail.markdown")}
                 >
-                  {selectedRelativePath && (
-                    <div className="text-xs font-mono text-muted-foreground break-all">
-                      {selectedRelativePath}
+                  <SkillFrontmatterCard data={frontmatterData} raw={frontmatterRaw} />
+                  {content ? (
+                    <div className={cn("markdown-body", detailTypographyClassName)}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {markdownContent}
+                      </ReactMarkdown>
                     </div>
-                  )}
-                  {isSelectedFileLoading ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="size-4 animate-spin" />
-                      {t("common.loading")}
-                    </div>
-                  ) : previewContent ? (
-                    isSelectedMarkdownFile ? (
-                      <>
-                        <SkillFrontmatterCard data={frontmatterData} raw={frontmatterRaw} />
-                        <div className={cn("markdown-body", detailTypographyClassName)}>
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {markdownContent}
-                          </ReactMarkdown>
-                        </div>
-                      </>
-                    ) : (
-                      <pre className="rounded-lg border border-border bg-card p-4 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words text-foreground/80">
-                        {previewContent}
-                      </pre>
-                    )
                   ) : (
                     <p className="text-sm text-muted-foreground italic">
                       {t("detail.noContent")}
@@ -861,14 +564,24 @@ export function SkillDetailView({
                   )}
                 </div>
               ) : activeTab === "raw" ? (
-                <pre
-                  className="p-6 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words text-foreground/80"
-                  role="tabpanel"
-                  aria-label={t("detail.rawSource")}
-                >
-                  {selectedRelativePath ? `${selectedRelativePath}\n\n` : ""}
-                  {isSelectedFileLoading ? t("common.loading") : (previewContent ?? t("detail.noContent"))}
-                </pre>
+                canEdit ? (
+                  <textarea
+                    className="p-6 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words text-foreground/80 bg-transparent border-none resize-none w-full h-full outline-none"
+                    role="tabpanel"
+                    aria-label={t("detail.rawSource")}
+                    value={editedContent}
+                    onChange={(e) => setEditedContent(e.target.value)}
+                    spellCheck={false}
+                  />
+                ) : (
+                  <pre
+                    className="p-6 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words text-foreground/80"
+                    role="tabpanel"
+                    aria-label={t("detail.rawSource")}
+                  >
+                    {content ?? t("detail.noContent")}
+                  </pre>
+                )
               ) : (
                 <div
                   className="p-6 space-y-4"
@@ -889,7 +602,7 @@ export function SkillDetailView({
                       variant="outline"
                       size="sm"
                       onClick={explanation ? handleRefreshExplanation : handleGenerateExplanation}
-                      disabled={!skillContent || isExplanationLoading || isExplanationStreaming}
+                      disabled={!content || isExplanationLoading || isExplanationStreaming}
                       className="gap-1.5"
                     >
                       {isExplanationLoading || isExplanationStreaming ? (
@@ -961,7 +674,7 @@ export function SkillDetailView({
                       <Button
                         size="sm"
                         onClick={handleGenerateExplanation}
-                        disabled={!skillContent || isExplanationLoading || isExplanationStreaming}
+                        disabled={!content || isExplanationLoading || isExplanationStreaming}
                         className="gap-1.5"
                       >
                         <Bot className="size-3.5" />
@@ -980,36 +693,6 @@ export function SkillDetailView({
             >
               {isFileMode && discoverMetadata ? (
                 <>
-                  <section aria-label={t("detail.filesRegion")}>
-                    <SectionLabel>{t("detail.files")}</SectionLabel>
-                    {isDirectoryTreeLoading ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader2 className="size-3.5 animate-spin" />
-                        {t("common.loading")}
-                      </div>
-                    ) : directoryTreeError ? (
-                      <p className="text-xs leading-relaxed text-muted-foreground">
-                        {directoryTreeError}
-                      </p>
-                    ) : directoryTree.length > 0 ? (
-                      <div className="space-y-1">
-                        {directoryTree.map((node) => (
-                          <FileTreeNode
-                            key={node.path}
-                            node={node}
-                            level={0}
-                            selectedPath={selectedPreviewPath}
-                            expandedDirectories={expandedDirectories}
-                            onToggleDirectory={handleToggleDirectory}
-                            onSelectFile={handleSelectFile}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">{t("detail.noFiles")}</p>
-                    )}
-                  </section>
-
                   {/* Discover metadata */}
                   <section aria-label={t("detail.metadataRegion")}>
                     <SectionLabel>{t("detail.metadata")}</SectionLabel>
@@ -1049,36 +732,6 @@ export function SkillDetailView({
                 </>
               ) : detail ? (
                 <>
-                  <section aria-label={t("detail.filesRegion")}>
-                    <SectionLabel>{t("detail.files")}</SectionLabel>
-                    {isDirectoryTreeLoading ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader2 className="size-3.5 animate-spin" />
-                        {t("common.loading")}
-                      </div>
-                    ) : directoryTreeError ? (
-                      <p className="text-xs leading-relaxed text-muted-foreground">
-                        {directoryTreeError}
-                      </p>
-                    ) : directoryTree.length > 0 ? (
-                      <div className="space-y-1">
-                        {directoryTree.map((node) => (
-                          <FileTreeNode
-                            key={node.path}
-                            node={node}
-                            level={0}
-                            selectedPath={selectedPreviewPath}
-                            expandedDirectories={expandedDirectories}
-                            onToggleDirectory={handleToggleDirectory}
-                            onSelectFile={handleSelectFile}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">{t("detail.noFiles")}</p>
-                    )}
-                  </section>
-
                   {(detail.source_kind || detail.is_read_only) && (
                     <section
                       aria-label={t("detail.sourceStatusRegion", {
@@ -1101,8 +754,8 @@ export function SkillDetailView({
                           <p className="text-xs leading-relaxed text-muted-foreground">
                             {t("detail.readOnlyDesc", {
                               defaultValue: i18n.language.startsWith("zh")
-                                ? "只读观测副本仅供查看，不能在这里安装、卸载或调整技能集。"
-                                : "Read-only observed copies are display-only here, so install, uninstall, and collection changes are unavailable.",
+                                ? "插件安装的副本仅供查看，不能在这里安装、卸载或调整技能集。"
+                                : "Plugin-installed copies are display-only here, so install, uninstall, and collection changes are unavailable.",
                             })}
                           </p>
                         ) : detail.source_kind === "user" ? (
@@ -1160,8 +813,8 @@ export function SkillDetailView({
                         <p className="text-xs leading-relaxed text-muted-foreground">
                           {t("detail.readOnlyInstallBlocked", {
                             defaultValue: i18n.language.startsWith("zh")
-                              ? "只读观测副本不可安装或卸载。"
-                              : "Install and uninstall are unavailable for read-only observed copies.",
+                              ? "插件来源的只读副本不可安装或卸载。"
+                              : "Install and uninstall are unavailable for read-only plugin copies.",
                           })}
                         </p>
                       ) : targetAgents.length === 0 ? (
@@ -1170,24 +823,44 @@ export function SkillDetailView({
                         </p>
                       ) : (
                         <>
-                          <PlatformToggleGroup
-                            label={t("sidebar.categoryLobster")}
-                            agents={lobsterAgents}
-                            skillName={detail.name}
-                            installationMap={installationMap}
-                            readOnlyAgentIds={readOnlyAgentIds}
-                            installingAgentId={installingAgentId}
-                            onToggle={handleToggle}
-                          />
-                          <PlatformToggleGroup
-                            label={t("sidebar.categoryCoding")}
-                            agents={codingAgents}
-                            skillName={detail.name}
-                            installationMap={installationMap}
-                            readOnlyAgentIds={readOnlyAgentIds}
-                            installingAgentId={installingAgentId}
-                            onToggle={handleToggle}
-                          />
+                          {lobsterAgents.length > 0 && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider w-12 shrink-0">
+                                {t("sidebar.categoryLobster")}
+                              </span>
+                              <div className="flex items-center gap-0.5 flex-wrap">
+                                {lobsterAgents.map((agent) => (
+                                  <PlatformToggleIcon
+                                    key={agent.id}
+                                    agent={agent}
+                                    skillName={detail.name}
+                                    isInstalled={installationMap.has(agent.id)}
+                                    isLoading={installingAgentId === agent.id}
+                                    onToggle={() => handleToggle(agent.id)}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {codingAgents.length > 0 && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider w-12 shrink-0">
+                                {t("sidebar.categoryCoding")}
+                              </span>
+                              <div className="flex items-center gap-0.5 flex-wrap">
+                                {codingAgents.map((agent) => (
+                                  <PlatformToggleIcon
+                                    key={agent.id}
+                                    agent={agent}
+                                    skillName={detail.name}
+                                    isInstalled={installationMap.has(agent.id)}
+                                    isLoading={installingAgentId === agent.id}
+                                    onToggle={() => handleToggle(agent.id)}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </>
                       )}
                     </div>
@@ -1200,8 +873,8 @@ export function SkillDetailView({
                       <p className="text-xs leading-relaxed text-muted-foreground">
                         {t("detail.readOnlyCollectionsBlocked", {
                           defaultValue: i18n.language.startsWith("zh")
-                            ? "只读观测副本不可调整技能集。"
-                            : "Collection management is unavailable for read-only observed copies.",
+                            ? "插件来源的只读副本不可调整技能集。"
+                            : "Collection management is unavailable for read-only plugin copies.",
                         })}
                       </p>
                     ) : (
@@ -1230,6 +903,57 @@ export function SkillDetailView({
                       </div>
                     )}
                   </section>
+
+                  {/* Git commit form */}
+                  {canEdit && (
+                    <section aria-label={t("marketplace.commitMessage")}>
+                      <SectionLabel>{t("marketplace.commitMessage")}</SectionLabel>
+                      <div className="space-y-2">
+                        <Input
+                          placeholder={t("marketplace.commitMessagePlaceholder")}
+                          value={commitMessage}
+                          onChange={(e) => setCommitMessage(e.target.value)}
+                          className="text-xs"
+                          disabled={isSaving}
+                        />
+                        <Button
+                          onClick={async () => {
+                            if (!detail || !commitMessage.trim() || !centralSkillsDir) return;
+                            setIsSaving(true);
+                            try {
+                              await invoke("write_skill_file", {
+                                path: detail.file_path,
+                                content: editedContent,
+                              });
+                              await invoke("git_commit_and_push", {
+                                repoPath: centralSkillsDir,
+                                filePath: detail.file_path,
+                                message: commitMessage.trim(),
+                              });
+                              toast.success(t("marketplace.savePushSuccess"));
+                              setCommitMessage("");
+                            } catch (err) {
+                              toast.error(
+                                t("marketplace.savePushError", { error: String(err) })
+                              );
+                            } finally {
+                              setIsSaving(false);
+                            }
+                          }}
+                          disabled={!commitMessage.trim() || isSaving}
+                          className="w-full gap-2"
+                          size="sm"
+                        >
+                          {isSaving ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <GitCommitHorizontal className="size-3.5" />
+                          )}
+                          {t("marketplace.saveAndPush")}
+                        </Button>
+                      </div>
+                    </section>
+                  )}
                 </>
               ) : null}
             </aside>
