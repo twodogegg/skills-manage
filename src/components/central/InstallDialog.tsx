@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioItem } from "@/components/ui/radio-group";
 import { AgentWithStatus, SkillWithLinks } from "@/types";
-import { isInstallTargetAgent } from "@/lib/agents";
+import { filterVisiblePlatformAgents, isInstallTargetAgent } from "@/lib/agents";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ export function InstallDialog({
   const { t } = useTranslation();
   // Only show real install targets; source-only categories such as Obsidian
   // must never become selectable platform targets.
-  const targetAgents = agents.filter(isInstallTargetAgent);
+  const targetAgents = filterVisiblePlatformAgents(agents.filter(isInstallTargetAgent));
 
   // Track which agents are selected for installation.
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(

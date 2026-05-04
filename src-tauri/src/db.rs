@@ -912,6 +912,13 @@ pub fn builtin_agents() -> Vec<Agent> {
     ]
 }
 
+pub const UNIVERSAL_AGENTS_SKILLS_AGENT_IDS: &[&str] =
+    &["amp", "codex", "cursor", "gemini-cli", "opencode", "copilot"];
+
+pub fn agent_supports_universal_agents_skills(agent_id: &str) -> bool {
+    UNIVERSAL_AGENTS_SKILLS_AGENT_IDS.contains(&agent_id)
+}
+
 // ─── Skills ───────────────────────────────────────────────────────────────────
 
 /// Insert or update a skill record.
@@ -1047,35 +1054,7 @@ pub async fn get_skills_for_agent(
     pool: &DbPool,
     agent_id: &str,
 ) -> Result<Vec<SkillForAgent>, String> {
-    if agent_id == "claude-code" {
-        let observations = get_agent_skill_observations(pool, agent_id).await?;
-        if !observations.is_empty() {
-            let mut conflict_counts: HashMap<String, i64> = HashMap::new();
-            for observation in &observations {
-                *conflict_counts
-                    .entry(observation.skill_id.clone())
-                    .or_insert(0) += 1;
-            }
-
-            return Ok(observations
-                .into_iter()
-                .map(|observation| {
-                    let conflict_count = conflict_counts
-                        .get(&observation.skill_id)
-                        .copied()
-                        .unwrap_or(0);
-                    let mut skill = observation_to_skill_for_agent(observation);
-                    if conflict_count > 1 {
-                        skill.conflict_group = Some(claude_conflict_group(agent_id, &skill.id));
-                        skill.conflict_count = conflict_count;
-                    }
-                    skill
-                })
-                .collect());
-        }
-    }
-
-    sqlx::query_as::<_, SkillForAgent>(
+    let installed_skills = sqlx::query_as::<_, SkillForAgent>(
         "SELECT s.id,
                 s.id AS row_id,
                 s.name,
@@ -1097,7 +1076,49 @@ pub async fn get_skills_for_agent(
     .bind(agent_id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    let observations = get_agent_skill_observations(pool, agent_id).await?;
+    if observations.is_empty() {
+        return Ok(installed_skills);
+    }
+
+    let mut conflict_counts: HashMap<String, i64> = HashMap::new();
+    for observation in &observations {
+        *conflict_counts
+            .entry(observation.skill_id.clone())
+            .or_insert(0) += 1;
+    }
+
+    let observed_skills: Vec<SkillForAgent> = observations
+        .into_iter()
+        .map(|observation| {
+            let conflict_count = conflict_counts
+                .get(&observation.skill_id)
+                .copied()
+                .unwrap_or(0);
+            let mut skill = observation_to_skill_for_agent(observation);
+            if conflict_count > 1 {
+                skill.conflict_group = Some(claude_conflict_group(agent_id, &skill.id));
+                skill.conflict_count = conflict_count;
+            }
+            skill
+        })
+        .collect();
+
+    if agent_id == "claude-code" || installed_skills.is_empty() {
+        return Ok(observed_skills);
+    }
+
+    let installed_ids: std::collections::HashSet<String> =
+        installed_skills.iter().map(|skill| skill.id.clone()).collect();
+    let mut merged = installed_skills;
+    merged.extend(
+        observed_skills
+            .into_iter()
+            .filter(|skill| !installed_ids.contains(&skill.id)),
+    );
+    Ok(merged)
 }
 
 pub async fn upsert_agent_skill_observation(
@@ -1181,6 +1202,51 @@ pub async fn delete_skill(pool: &DbPool, skill_id: &str) -> Result<(), String> {
         .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM skills WHERE id = ?")
+        .bind(skill_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Delete all local database state owned by a Central Skill removal.
+///
+/// This intentionally does not delete `discovered_skills`: those rows describe
+/// project-level sources and `is_already_central` is recomputed from the
+/// filesystem when discovery results are loaded.
+pub async fn delete_central_skill_records(
+    pool: &DbPool,
+    skill_id: &str,
+    skill_name: &str,
+) -> Result<(), String> {
+    sqlx::query("DELETE FROM skill_installations WHERE skill_id = ?")
+        .bind(skill_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM collection_skills WHERE skill_id = ?")
+        .bind(skill_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM skill_explanations WHERE skill_id = ?")
+        .bind(skill_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE marketplace_skills
+         SET is_installed = 0
+         WHERE name = ? OR name = ? OR id = ? OR id LIKE ?",
+    )
+    .bind(skill_name)
+    .bind(skill_id)
+    .bind(skill_id)
+    .bind(format!("%::{}", skill_id))
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
     sqlx::query("DELETE FROM skills WHERE id = ?")
         .bind(skill_id)
         .execute(pool)
@@ -1366,6 +1432,24 @@ pub async fn get_skill_installations(
         .fetch_all(pool)
         .await
         .map_err(|e| e.to_string())
+}
+
+pub async fn get_read_only_observed_agent_ids_for_skill(
+    pool: &DbPool,
+    skill_id: &str,
+) -> Result<Vec<String>, String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT agent_id
+         FROM agent_skill_observations
+         WHERE skill_id = ?
+           AND is_read_only = 1
+           AND source_kind = 'compatibility'
+         ORDER BY agent_id",
+    )
+    .bind(skill_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())
 }
 
 // ─── Agents ───────────────────────────────────────────────────────────────────

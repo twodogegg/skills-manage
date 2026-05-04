@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Pencil, Loader2, FolderOpen, Cpu, Info, Database, Globe, Palette, Droplets, Bot, ChevronDown, ChevronRight, KeyRound } from "lucide-react";
+import { Plus, Trash2, Pencil, Loader2, FolderOpen, Cpu, Info, Database, Globe, Palette, Droplets, Bot, ChevronDown, ChevronRight, KeyRound, SlidersHorizontal } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -24,6 +24,13 @@ import { Input } from "@/components/ui/input";
 import { AgentWithStatus, ScanDirectory } from "@/types";
 import { AI_PROVIDERS, REGION_LABELS, RegionId } from "@/data/aiProviders";
 import { deriveHomeDir, formatPathForDisplay, joinPathForDisplay } from "@/lib/path";
+import {
+  filterVisiblePlatformAgents,
+  getVisiblePlatformIds,
+  isInstallTargetAgent,
+  setVisiblePlatformIds,
+} from "@/lib/agents";
+import { PlatformIcon } from "@/components/platform/PlatformIcon";
 
 // ─── App constants ────────────────────────────────────────────────────────────
 
@@ -193,6 +200,10 @@ export function SettingsView() {
 
   // Custom agents are those that are not built-in.
   const customAgents = agents.filter((a) => !a.is_builtin);
+  const installTargetAgents = agents.filter(isInstallTargetAgent);
+  const [visiblePlatformIds, setVisiblePlatformIdsState] = useState<string[]>(() => getVisiblePlatformIds());
+  const visiblePlatformIdSet = useMemo(() => new Set(visiblePlatformIds), [visiblePlatformIds]);
+  const visiblePlatformCount = filterVisiblePlatformAgents(installTargetAgents).length;
   const homeDir = useMemo(() => {
     const candidates = [
       agents.find((agent) => agent.id === "central")?.global_skills_dir,
@@ -317,6 +328,20 @@ export function SettingsView() {
   }, [centralSkillsDir]);
 
   const isGitHubPatDirty = useMemo(() => githubPatInput.trim() !== githubPat, [githubPatInput, githubPat]);
+
+  function handleToggleVisiblePlatform(agentId: string, visible: boolean) {
+    setVisiblePlatformIdsState((previous) => {
+      const nextSet = new Set(previous);
+      if (visible) {
+        nextSet.add(agentId);
+      } else {
+        nextSet.delete(agentId);
+      }
+      const next = [...nextSet];
+      setVisiblePlatformIds(next);
+      return next;
+    });
+  }
 
   // ── Scan Directories Handlers ──────────────────────────────────────────────
 
@@ -524,7 +549,45 @@ export function SettingsView() {
             </div>
           </CardHeader>
 
-          <CardContent>
+          <CardContent className="space-y-4">
+            <div className="rounded-lg border border-border bg-muted/20 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-2">
+                  <SlidersHorizontal className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">{t("settings.visiblePlatformsTitle")}</div>
+                    <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                      {t("settings.visiblePlatformsDesc")}
+                    </div>
+                  </div>
+                </div>
+                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-mono text-muted-foreground">
+                  {visiblePlatformCount}/{installTargetAgents.length}
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {installTargetAgents.map((agent) => {
+                  const visible = visiblePlatformIdSet.has(agent.id);
+                  return (
+                    <label
+                      key={agent.id}
+                      className="flex items-center gap-2 rounded-md border border-border/70 bg-background/60 px-2.5 py-2"
+                    >
+                      <PlatformIcon agentId={agent.id} className="size-4 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate text-sm">{agent.display_name}</span>
+                      <Switch
+                        checked={visible}
+                        onCheckedChange={(checked) => handleToggleVisiblePlatform(agent.id, checked)}
+                        aria-label={t("settings.visiblePlatformToggleLabel", {
+                          name: agent.display_name,
+                        })}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
             {platformError && (
               <p className="text-xs text-destructive mb-3" role="alert">
                 {platformError}

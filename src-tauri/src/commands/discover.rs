@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -12,6 +12,9 @@ use crate::path_utils::{path_to_string, resolve_home_dir};
 use crate::commands::settings;
 use crate::AppState;
 
+const OBSIDIAN_PLATFORM_ID: &str = "obsidian";
+const OBSIDIAN_PLATFORM_NAME: &str = "Obsidian";
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /// A candidate scan root (e.g. ~/projects, ~/Developer).
@@ -21,6 +24,14 @@ pub struct ScanRoot {
     pub label: String,
     pub exists: bool,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObsidianVault {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub skill_count: usize,
 }
 
 /// A project-level skill discovered during a full-disk scan.
@@ -91,6 +102,18 @@ pub struct ImportResult {
     pub target: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct ObsidianRegistryFile {
+    #[serde(default)]
+    vaults: HashMap<String, ObsidianRegistryVault>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ObsidianRegistryVault {
+    #[serde(default)]
+    path: Option<String>,
+}
+
 // ─── Global cancel flag ──────────────────────────────────────────────────────
 
 static SCAN_CANCEL: AtomicBool = AtomicBool::new(false);
@@ -125,6 +148,179 @@ fn default_scan_roots() -> Vec<ScanRoot> {
             }
         })
         .collect()
+}
+
+fn normalized_scan_root_key(path: &str) -> String {
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        return path_to_string(&canonical);
+    }
+
+    let without_trailing = path.trim_end_matches(['/', '\\']);
+    if without_trailing.is_empty() {
+        path.to_string()
+    } else {
+        without_trailing.to_string()
+    }
+}
+
+fn is_obsidian_vault_dir(path: &Path) -> bool {
+    path.join(".obsidian").is_dir()
+}
+
+fn file_name_or_unknown(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn stable_path_hash(path: &str) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in path.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn selected_skill_dir_name(dir_path: &str) -> String {
+    Path::new(dir_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn obsidian_qualified_id(vault_path: &str, skill_id: &str) -> String {
+    format!(
+        "{}__{}__{}",
+        OBSIDIAN_PLATFORM_ID,
+        stable_path_hash(vault_path),
+        skill_id
+    )
+}
+
+fn obsidian_vault_id(vault_path: &str) -> String {
+    stable_path_hash(vault_path)
+}
+
+fn obsidian_registry_path_for_home(home: &Path) -> PathBuf {
+    home.join("Library")
+        .join("Application Support")
+        .join("obsidian")
+        .join("obsidian.json")
+}
+
+fn obsidian_icloud_documents_dir_for_home(home: &Path) -> PathBuf {
+    home.join("Library")
+        .join("Mobile Documents")
+        .join("iCloud~md~obsidian")
+        .join("Documents")
+}
+
+fn read_obsidian_registry_vault_paths(registry_path: &Path) -> Vec<PathBuf> {
+    let content = match std::fs::read_to_string(registry_path) {
+        Ok(content) => content,
+        Err(_) => return Vec::new(),
+    };
+    let registry: ObsidianRegistryFile = match serde_json::from_str(&content) {
+        Ok(registry) => registry,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut paths: Vec<PathBuf> = registry
+        .vaults
+        .into_values()
+        .filter_map(|vault| vault.path)
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir() && is_obsidian_vault_dir(path))
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn direct_obsidian_vault_children(root: &Path) -> Vec<PathBuf> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut paths: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && is_obsidian_vault_dir(path))
+        .collect();
+    paths.sort();
+    paths
+}
+
+fn obsidian_source_vault_paths() -> Vec<PathBuf> {
+    let home = resolve_home_dir();
+    let registry_paths = read_obsidian_registry_vault_paths(&obsidian_registry_path_for_home(&home));
+    if !registry_paths.is_empty() {
+        return registry_paths;
+    }
+
+    direct_obsidian_vault_children(&obsidian_icloud_documents_dir_for_home(&home))
+}
+
+fn scan_obsidian_vault(vault_dir: &Path, central_dir: &Path) -> Option<DiscoveredProject> {
+    if !is_obsidian_vault_dir(vault_dir) {
+        return None;
+    }
+
+    let project_path = path_to_string(vault_dir);
+    let project_name = file_name_or_unknown(vault_dir);
+    let mut selected_by_skill_id: BTreeMap<String, DiscoveredSkill> = BTreeMap::new();
+
+    for rel_source in [
+        PathBuf::from(".skills"),
+        PathBuf::from(".agents/skills"),
+        PathBuf::from(".claude/skills"),
+    ] {
+        let source_dir = vault_dir.join(rel_source);
+        let mut scanned = super::scanner::scan_skill_root(
+            &source_dir,
+            false,
+            super::scanner::ScanDirectoryOptions::nested(),
+        );
+        scanned.sort_by(|a, b| a.id.cmp(&b.id).then_with(|| a.dir_path.cmp(&b.dir_path)));
+
+        for skill in scanned {
+            if selected_by_skill_id.contains_key(&skill.id) {
+                continue;
+            }
+
+            let skill_dir_name = selected_skill_dir_name(&skill.dir_path);
+            let is_already_central = central_dir.join(skill_dir_name).exists();
+            selected_by_skill_id.insert(
+                skill.id.clone(),
+                DiscoveredSkill {
+                    id: obsidian_qualified_id(&project_path, &skill.id),
+                    name: skill.name,
+                    description: skill.description,
+                    file_path: skill.file_path,
+                    dir_path: skill.dir_path,
+                    platform_id: OBSIDIAN_PLATFORM_ID.to_string(),
+                    platform_name: OBSIDIAN_PLATFORM_NAME.to_string(),
+                    project_path: project_path.clone(),
+                    project_name: project_name.clone(),
+                    is_already_central,
+                },
+            );
+        }
+    }
+
+    if selected_by_skill_id.is_empty() {
+        None
+    } else {
+        Some(DiscoveredProject {
+            project_path,
+            project_name,
+            skills: selected_by_skill_id.into_values().collect(),
+        })
+    }
 }
 
 /// Build the list of platform skill directory patterns to look for.
@@ -434,6 +630,108 @@ pub async fn get_scan_roots(state: State<'_, AppState>) -> Result<Vec<ScanRoot>,
     }
 
     Ok(roots)
+}
+
+fn obsidian_vaults_from_allowed_paths(
+    allowed_vault_paths: &HashSet<String>,
+    central_dir: &Path,
+) -> Vec<ObsidianVault> {
+    let mut vaults: Vec<ObsidianVault> = allowed_vault_paths
+        .iter()
+        .filter_map(|path| {
+            let vault_path = PathBuf::from(path);
+            if !vault_path.is_dir() || !is_obsidian_vault_dir(&vault_path) {
+                return None;
+            }
+
+            let skill_count = scan_obsidian_vault(&vault_path, central_dir)
+                .map(|project| project.skills.len())
+                .unwrap_or(0);
+            if skill_count == 0 {
+                return None;
+            }
+
+            Some(ObsidianVault {
+                id: obsidian_vault_id(path),
+                name: file_name_or_unknown(&vault_path),
+                path: path.clone(),
+                skill_count,
+            })
+        })
+        .collect();
+
+    vaults.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    vaults
+}
+
+async fn get_obsidian_vaults_impl(pool: &DbPool) -> Result<Vec<ObsidianVault>, String> {
+    let allowed_vault_paths: HashSet<String> = obsidian_source_vault_paths()
+        .into_iter()
+        .map(|path| normalized_scan_root_key(&path.to_string_lossy()))
+        .collect();
+    let central_dir = PathBuf::from(settings::get_central_skills_dir_impl(pool).await?);
+    Ok(obsidian_vaults_from_allowed_paths(
+        &allowed_vault_paths,
+        &central_dir,
+    ))
+}
+
+async fn get_obsidian_vault_skills_impl(
+    pool: &DbPool,
+    vault_id: &str,
+) -> Result<Vec<DiscoveredSkill>, String> {
+    let allowed_vault_paths: HashSet<String> = obsidian_source_vault_paths()
+        .into_iter()
+        .map(|path| normalized_scan_root_key(&path.to_string_lossy()))
+        .collect();
+
+    let vault_path = allowed_vault_paths
+        .iter()
+        .find(|path| obsidian_vault_id(path) == vault_id || path.as_str() == vault_id)
+        .cloned()
+        .ok_or_else(|| format!("Obsidian vault '{}' not found", vault_id))?;
+
+    let central_dir = PathBuf::from(settings::get_central_skills_dir_impl(pool).await?);
+    let skills = scan_obsidian_vault(&PathBuf::from(&vault_path), &central_dir)
+        .map(|project| project.skills)
+        .unwrap_or_default();
+
+    let now = Utc::now().to_rfc3339();
+    for skill in &skills {
+        db::insert_discovered_skill(
+            pool,
+            &skill.id,
+            &skill.name,
+            skill.description.as_deref(),
+            &skill.file_path,
+            &skill.dir_path,
+            &skill.project_path,
+            &skill.project_name,
+            &skill.platform_id,
+            &now,
+        )
+        .await?;
+    }
+
+    Ok(skills)
+}
+
+#[tauri::command]
+pub async fn get_obsidian_vaults(state: State<'_, AppState>) -> Result<Vec<ObsidianVault>, String> {
+    get_obsidian_vaults_impl(&state.db).await
+}
+
+#[tauri::command]
+pub async fn get_obsidian_vault_skills(
+    state: State<'_, AppState>,
+    vault_id: String,
+) -> Result<Vec<DiscoveredSkill>, String> {
+    get_obsidian_vault_skills_impl(&state.db, &vault_id).await
 }
 
 /// Persist the enabled/disabled state of a scan root.

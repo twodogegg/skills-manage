@@ -6,8 +6,7 @@ import {
   Layers,
   Radar,
   Store,
-  Eye,
-  EyeOff,
+  SlidersHorizontal,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -18,7 +17,11 @@ import { useCollectionStore } from "@/stores/collectionStore";
 import { useDiscoverStore } from "@/stores/discoverStore";
 import { useObsidianStore } from "@/stores/obsidianStore";
 import { cn } from "@/lib/utils";
-import { isEnabledInstallTargetAgent } from "@/lib/agents";
+import {
+  PLATFORM_VISIBILITY_CHANGE_EVENT,
+  filterVisiblePlatformAgents,
+  isEnabledInstallTargetAgent,
+} from "@/lib/agents";
 
 const OBSIDIAN_PLATFORM_ID = "obsidian";
 
@@ -105,7 +108,6 @@ function NavItem({
 // ─── Sidebar ────────────────────────────────────────────────────────────────
 
 export function Sidebar() {
-  const SHOW_ALL_PLATFORMS_KEY = "skills-manage:show-all-platforms";
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { t } = useTranslation();
@@ -120,37 +122,27 @@ export function Sidebar() {
   const loadObsidianVaults = useObsidianStore((s) => s.loadVaults);
 
   const [expanded, setExpanded] = useState(true);
-  const [showAllPlatforms, setShowAllPlatforms] = useState(() => {
-    try {
-      return window.localStorage.getItem(SHOW_ALL_PLATFORMS_KEY) === "true";
-    } catch {
-      return false;
-    }
-  });
-
+  const [visibilityVersion, setVisibilityVersion] = useState(0);
   useEffect(() => {
     loadCollections();
     loadDiscoveredSkills();
     loadObsidianVaults();
   }, [loadCollections, loadDiscoveredSkills, loadObsidianVaults]);
 
-  function toggleShowAllPlatforms() {
-    setShowAllPlatforms((previous) => {
-      const next = !previous;
-      try {
-        window.localStorage.setItem(SHOW_ALL_PLATFORMS_KEY, String(next));
-      } catch {
-        // Ignore storage failures and keep the in-memory preference.
-      }
-      return next;
-    });
-  }
+  useEffect(() => {
+    function handleVisibilityChange() {
+      setVisibilityVersion((version) => version + 1);
+    }
+    window.addEventListener(PLATFORM_VISIBILITY_CHANGE_EVENT, handleVisibilityChange);
+    return () => {
+      window.removeEventListener(PLATFORM_VISIBILITY_CHANGE_EVENT, handleVisibilityChange);
+    };
+  }, []);
 
-  const platformAgents = agents.filter(
-    (a) =>
-      isEnabledInstallTargetAgent(a) &&
-      (showAllPlatforms || (skillsByAgent[a.id] ?? 0) > 0)
+  const platformAgents = filterVisiblePlatformAgents(
+    agents.filter(isEnabledInstallTargetAgent)
   );
+  void visibilityVersion;
   const lobsterAgents = platformAgents.filter((a) => a.category === "lobster");
   const codingAgents = platformAgents.filter((a) => a.category !== "lobster");
   const populatedObsidianVaults = obsidianVaults.filter((vault) => vault.skill_count > 0);
@@ -343,9 +335,9 @@ export function Sidebar() {
             expanded ? "px-1" : "flex justify-center"
           )}>
             <button
-              onClick={toggleShowAllPlatforms}
-              title={showAllPlatforms ? t("sidebar.hideEmptyPlatforms") : t("sidebar.showAllPlatforms")}
-              aria-label={showAllPlatforms ? t("sidebar.hideEmptyPlatforms") : t("sidebar.showAllPlatforms")}
+              onClick={() => navigate("/settings")}
+              title={t("sidebar.manageVisiblePlatforms")}
+              aria-label={t("sidebar.manageVisiblePlatforms")}
               className={cn(
                 "cursor-pointer rounded-md text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary",
                 expanded
@@ -353,10 +345,10 @@ export function Sidebar() {
                   : "p-2"
               )}
             >
-              {showAllPlatforms ? <EyeOff className="size-4 shrink-0" /> : <Eye className="size-4 shrink-0" />}
+              <SlidersHorizontal className="size-4 shrink-0" />
               {expanded && (
                 <span className="truncate">
-                  {showAllPlatforms ? t("sidebar.hideEmptyPlatforms") : t("sidebar.showAllPlatforms")}
+                  {t("sidebar.manageVisiblePlatforms")}
                 </span>
               )}
             </button>

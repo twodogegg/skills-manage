@@ -42,7 +42,8 @@
     "categoryObsidian": "Obsidian",
     "obsidianVaultLabel": "Obsidian vault {{name}} — {{count}} skills — {{path}}",
     "showAllPlatforms": "Show all platforms",
-    "hideEmptyPlatforms": "Hide empty platforms"
+    "hideEmptyPlatforms": "Hide empty platforms",
+    "manageVisiblePlatforms": "Manage visible platforms"
   },
   "platform": {
     "searchPlaceholder": "Search skills...",
@@ -339,6 +340,9 @@
     "customPlatformsDesc": "Register custom AI platforms. After adding, the platform appears in the sidebar.",
     "addPlatform": "Add Platform",
     "addPlatformAriaLabel": "Add custom platform",
+    "visiblePlatformsTitle": "Visible Platforms",
+    "visiblePlatformsDesc": "Choose which platforms appear in the sidebar and installation status. Hiding a platform does not delete it or uninstall skills.",
+    "visiblePlatformToggleLabel": "Show platform {{name}}",
     "noPlatforms": "No custom platforms. Click \"Add Platform\" to register one.",
     "editPlatformLabel": "Edit platform {{name}}",
     "removePlatformLabel": "Remove platform {{name}}",

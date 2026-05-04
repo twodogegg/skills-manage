@@ -29,6 +29,7 @@ import { CollectionPickerDialog } from "@/components/collection/CollectionPicker
 import { AgentWithStatus, ClaudeSourceKind, SkillDetailRequest, SkillInstallation } from "@/types";
 import { cn } from "@/lib/utils";
 import { invoke, isTauriRuntime } from "@/lib/tauri";
+import { filterVisiblePlatformAgents, isInstallTargetAgent } from "@/lib/agents";
 
 // ─── Section Label ─────────────────────────────────────────────────────────────
 
@@ -241,6 +242,8 @@ export interface SkillDetailViewProps {
   scrollContainerRef?: Ref<HTMLDivElement>;
   /** Optional id applied to the ViewHeader h1 for shell-level aria-labelledby. */
   titleId?: string;
+  /** Optional callback fired after install/uninstall state changes. */
+  onInstallationsChange?: () => void | Promise<void>;
 }
 
 export function SkillDetailView({
@@ -254,6 +257,7 @@ export function SkillDetailView({
   onRequestClose: _onRequestClose,
   scrollContainerRef,
   titleId,
+  onInstallationsChange,
 }: SkillDetailViewProps) {
   const { t, i18n } = useTranslation();
   const isFileMode = !skillId && !!filePath;
@@ -365,7 +369,7 @@ export function SkillDetailView({
 
   // ── Derived values ───────────────────────────────────────────────────────
 
-  const targetAgents = agents.filter((a) => a.id !== "central");
+  const targetAgents = filterVisiblePlatformAgents(agents.filter(isInstallTargetAgent));
   const lobsterAgents = targetAgents.filter((a) => a.category === "lobster");
   const codingAgents = targetAgents.filter((a) => a.category !== "lobster");
 
@@ -388,6 +392,7 @@ export function SkillDetailView({
       await Promise.all([
         refreshCounts(),
         refreshInstallations(skillId),
+        onInstallationsChange?.(),
       ]);
     } catch (err) {
       toast.error(

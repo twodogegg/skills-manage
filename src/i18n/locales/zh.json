@@ -42,7 +42,8 @@
     "categoryObsidian": "Obsidian",
     "obsidianVaultLabel": "Obsidian 仓库 {{name}} — {{count}} 个技能 — {{path}}",
     "showAllPlatforms": "显示所有平台",
-    "hideEmptyPlatforms": "隐藏空平台"
+    "hideEmptyPlatforms": "隐藏空平台",
+    "manageVisiblePlatforms": "管理显示平台"
   },
   "platform": {
     "searchPlaceholder": "搜索技能...",
@@ -339,6 +340,9 @@
     "customPlatformsDesc": "注册自定义 AI 平台，添加后可在侧边栏中查看和管理其技能。",
     "addPlatform": "添加平台",
     "addPlatformAriaLabel": "添加自定义平台",
+    "visiblePlatformsTitle": "显示平台",
+    "visiblePlatformsDesc": "控制侧边栏和安装状态里显示哪些平台。关闭只会隐藏显示，不会删除平台或卸载技能。",
+    "visiblePlatformToggleLabel": "显示平台 {{name}}",
     "noPlatforms": "暂无自定义平台。点击「添加平台」注册新平台。",
     "editPlatformLabel": "编辑平台 {{name}}",
     "removePlatformLabel": "删除平台 {{name}}",

@@ -20,7 +20,7 @@ import { InlineConfirmAction } from "@/components/ui/inline-confirm-action";
 import { PlatformIcon } from "@/components/platform/PlatformIcon";
 import type { AgentWithStatus, ClaudeSourceKind } from "@/types";
 import { cn } from "@/lib/utils";
-import { isInstallTargetAgent } from "@/lib/agents";
+import { filterVisiblePlatformAgents, isInstallTargetAgent } from "@/lib/agents";
 
 const FEATURED_CODING_AGENT_IDS = [
   "cursor",
@@ -182,7 +182,9 @@ export function UnifiedSkillCard(props: UnifiedSkillCardProps) {
   );
 
   // Show all Lobster platforms, but only the highest-frequency Coding platforms.
-  const targetPlatformAgents = platformIcons?.agents.filter(isInstallTargetAgent) ?? [];
+  const targetPlatformAgents = filterVisiblePlatformAgents(
+    platformIcons?.agents.filter(isInstallTargetAgent) ?? []
+  );
   const lobsterAgents = targetPlatformAgents.filter((agent) => agent.category === "lobster");
   const codingAgents = targetPlatformAgents.filter((agent) => agent.category !== "lobster");
   const linkedAgentIds = new Set(platformIcons?.linkedAgents ?? []);
